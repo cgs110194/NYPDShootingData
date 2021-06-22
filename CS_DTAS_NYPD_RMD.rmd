@@ -1,0 +1,315 @@
+---
+title: "Shootings in New York City - 2006 through 2020"
+output:
+  html_document: 
+    toc: true
+    toc_depth: 2
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+# Report Introduction
+
+Hello! Thank you for reading my report on shootings in New York City from 2006 through 2020. The analyses and visualizations contained herein are based on publicly available data provided by the New York Police Department, whose jurisdiction spans the five boroughs of New York City. You will find the packages that I've used, along with the code implemented to manipulate my data, throughout the rest of this section; subsequent sections will explore various relationships within this data set.
+
+## Packages Implemented
+
+```{r load_packages, warning = FALSE, message = FALSE}
+library(lubridate)
+library(tidyverse)
+library(dplyr)
+library(RColorBrewer)
+library(gbm)
+library(caret)
+```
+
+## Data Source + Manipulation
+
+```{r load_data}
+raw_data <- read.csv("https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD")
+
+clean_data <- raw_data %>% 
+                select(c(INCIDENT_KEY, OCCUR_DATE, OCCUR_TIME, PERP_SEX, VIC_SEX,
+                        STATISTICAL_MURDER_FLAG, Latitude, Longitude, BORO)) %>%
+                mutate(date = mdy(OCCUR_DATE)) %>%
+                mutate(hour = as.integer(gsub(":","",substr(OCCUR_TIME, 1, 2)))) %>%
+  mutate(month = month(date)) %>%
+  mutate(day_of_week = ordered(weekdays(date), c("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"))) %>%
+  mutate(is_murder = as.logical(STATISTICAL_MURDER_FLAG)) %>%
+  mutate(BORO = as.factor(BORO))
+
+clean_data$PERP_SEX[clean_data$PERP_SEX == ""] <- "U"
+
+
+summary(clean_data)
+```
+
+# Is There Gender Discrimination Amongst NYC Murderers?
+
+## Intro
+
+In a class that I took at Stony Brook University on the Sociology of Crime, we learned that approximately 8 in 10 murders are "intraracial" (i.e. white on white or black on black). A recent article from Reuters corroborates this notion: <https://www.reuters.com/article/uk-factcheck-data-racial-murder-idUSKCN24I2A9>
+
+I thought it would be interesting to explore whether there is any bias in who murderers (and particularly, those who use guns) choose to kill on the basis of gender.
+
+## Code/Analysis
+
+### Data + Set-Up
+
+```{r murder_data}
+murder_data <- clean_data %>%
+                  filter(is_murder == TRUE)
+
+```
+
+### Plots {.tabset}
+
+#### Murders
+
+```{r vic_perp_gender_1}
+
+perp_vs_vic_murder <- ggplot(murder_data, aes(PERP_SEX)) 
+perp_vs_vic_murder + geom_bar(aes(fill = VIC_SEX)) +
+  labs(title = "Victim Sex by Perpetrator Sex - Murders")
+
+```
+
+#### All Shootings
+
+```{r vic_perp_gender_2}
+
+perp_vs_vic_all <- ggplot(clean_data, aes(PERP_SEX))
+perp_vs_vic_all + geom_bar(aes(fill = VIC_SEX)) +
+  labs(title = "Victim Sex by Perpetrator Sex - All Shootings")
+
+```
+
+#### Perp by Victim
+
+```{r vic_perp_gender_3}
+vic_vs_perp <- ggplot(murder_data, aes(VIC_SEX))
+vic_vs_perp + geom_bar(aes(fill = PERP_SEX)) +
+  labs(title = "Perpetrator Sex by Victim Sex - Murders")
+
+```
+
+## Conclusions
+
+Objectively, men commit more crimes (especially violent ones), so the distribution of murders by PERP_SEX is not too surprising; however, I did not expect the distribution by VIC_SEX to be so distorted. While there is possibly bias in the data to the extent that perpetrators who go unidentified may not be evenly distributed by gender, it is crystal clear that men comprise the vast majority of shooting victims (at least in New York City). In comparison with my original expectations:
+
+- Murders committed by men are vastly "intragender," which aligns with the general patterns observed by race.
+
+- Murders committed by women swing the opposite direction; that is to say, the victims of shooting murders committed by women *also* show a strong bias towards male victims. Perhaps this is explainable, at least to some extent, by extenuating circumstances like domestic abuse or other forms of precedent victimization that these women are subject to.
+
+- When we flip the axes and review the distribution of PERP_SEX by VIC_SEX, it is readily apparent that murderers of male victims (at least where firearms are involved) appear to go unidentified at a much higher rate than their counterparts who murder women.
+
+# Do Different Boroughs See Different Frequency Distributions of Shootings?
+
+## Intro
+
+Having grown up in Queens, I'm tangentially familiar with the New York City commute. I've never had to make that trip for work myself, but millions of folks flock to NYC (and Manhattan in particular) from outlying boroughs, suburbs like Westchester and Long Island, and even other states like New Jersey and Connecticut. I would imagine that, given these dynamics, there will likely be an observable difference between the frequency of shootings by hour and day of week between boroughs.
+
+## Code/Analysis
+
+### Data + Set-Up
+
+```{r boro_data}
+
+# color code inspired by https://www.r-bloggers.com/2013/03/r-defining-your-own-color-schemes-for-heatmaps/
+red=rgb(1,0,0); green=rgb(0,1,0); yellow=rgb(1,1,0)
+GtoYrange<-colorRampPalette(c(green, yellow) )
+YtoRrange<-colorRampPalette(c(yellow, red) ) 
+
+shooting_time_data <- clean_data %>%
+  group_by(BORO, day_of_week, hour) %>%
+  count(hour)
+
+boroughs <- c("QUEENS", "BROOKLYN", "BRONX", "MANHATTAN", "STATEN ISLAND")
+queens_data <- shooting_time_data %>% filter(BORO == "QUEENS")
+brooklyn_data <- shooting_time_data %>% filter(BORO == "BROOKLYN")
+bronx_data <- shooting_time_data %>% filter(BORO == "BRONX")
+manhattan_data <- shooting_time_data %>% filter(BORO == "MANHATTAN")
+staten_data <- shooting_time_data %>% filter(BORO == "STATEN ISLAND")
+```
+
+### Plots {.tabset}
+
+#### Queens
+
+```{r boro_shootings_queens}
+
+ggplot(queens_data, aes(day_of_week, hour, fill= n)) + 
+    geom_tile() + 
+    ggtitle("Time Distribution of Shootings in Queens") + 
+    scale_y_reverse() + 
+    scale_fill_gradient2(low="gray", mid=GtoYrange(100), high=YtoRrange(100))
+
+```
+
+#### Brooklyn
+
+```{r boro_shootings_brooklyn}
+
+ggplot(brooklyn_data, aes(day_of_week, hour, fill= n)) + 
+    geom_tile() + 
+    ggtitle("Time Distribution of Shootings in Brooklyn") + 
+    scale_y_reverse() + 
+    scale_fill_gradient2(low="gray", mid=GtoYrange(100), high=YtoRrange(100))
+
+```
+
+#### The Bronx
+
+```{r boro_shootings_bronx}
+ggplot(bronx_data, aes(day_of_week, hour, fill= n)) + 
+    geom_tile() + 
+    ggtitle("Time Distribution of Shootings in The Bronx") + 
+    scale_y_reverse() + 
+    scale_fill_gradient2(low="gray", mid=GtoYrange(100), high=YtoRrange(100))
+
+```
+
+#### Manhattan
+
+```{r boro_shootings_manhattan}
+ggplot(manhattan_data, aes(day_of_week, hour, fill= n)) + 
+    geom_tile() + 
+    ggtitle("Time Distribution of Shootings in Manhattan") + 
+    scale_y_reverse() + 
+    scale_fill_gradient2(low="gray", mid=GtoYrange(100), high=YtoRrange(100))
+
+```
+
+#### Staten Island
+
+```{r boro_shootings_staten}
+ggplot(staten_data, aes(day_of_week, hour, fill= n)) + 
+    geom_tile() + 
+    ggtitle("Time Distribution of Shootings in Staten Island") + 
+    scale_y_reverse() + 
+    scale_fill_gradient2(low="gray", mid=GtoYrange(100), high=YtoRrange(100))
+
+```
+
+## Conclusions
+
+While it is not possible to neatly compare the absolute distribution of shootings within NYC by time, borough and day of the week without normalizing for the population of each borough, some conclusions can be drawn from these exhibits:
+
+- Shooting frequency drops during the day, presumably as individuals are busy working and criminals are less inclined to act during daylight hours.
+
+- In every borough, shootings are at their peak in the early morning hours of Saturday and Sunday (which are traditionally considered part of Friday night and Saturday night, respectively).
+
+  - This spike in shootings appears less dramatic in Manhattan, which is likely the result of higher NYPD presence in the city center during weekend "party hours."
+  
+  - While they certainly have other priorities to attend to that are more likely to transpire in Manhattan during these hours (i.e. drug trafficking, prostitution, etc.), NYPD would perhaps be well-advised to reallocate some resources to the outlying boroughs in order to preempt some of the shootings taking place there during that time.
+  
+- Models may fail to effectively capture the "process" that generates shootings on Staten Island, as the data from there are sporadic in nature. Inherently, a model trained on this data set would likely be better at predicting shootings in areas where they are more frequent due to bias towards these observations in the training set.
+  
+# Time Series Modeling
+
+## Intro
+
+As we observed in the previous heatmap visualizations, there is a clear pattern of when shootings most typically occur that is observable across all five boroughs to some extent. This begs the question: can we predict how many shootings are expected to occur in each borough based on time alone? There are other factors at play; namely, population growth will likely cause an annual increase in the number of observed shootings, and weather-related patterns could induce more shootings in the summer when folks are outside/spend more time interacting. In a concerted effort to model these phenomena, I would likely pull in actual population data and weather data; however, in order to account for this simply with the data provided as part of this preliminary attempt, I will use year and month as proxies for population growth and climate (respectively). Ultimately, I hope to compare the predictions from this rudimentary model to the average rate of shootings per hour by borough in order to determine when specific boroughs are expected to disproportionately contribute to shootings.
+
+## Code/Analysis
+
+### Data + Set-Up
+
+```{r model_data_cleaning}
+all_times <- clean_data %>%
+  mutate(year = year(date)) %>%
+  expand(BORO, year, month, day_of_week, hour)
+
+shooting_counts <- clean_data %>%
+  mutate(year = year(date)) %>%
+  group_by(BORO, year, month, day_of_week, hour) %>%
+  count(hour)
+
+nonzero_times <- subset(shooting_counts, select = -c(n))
+
+zero_records <- anti_join(all_times, nonzero_times, by = c("BORO", "year", "month", "day_of_week", "hour")) %>%
+  mutate(n = 0)
+
+shooting_model_data <- rbind(shooting_counts, zero_records)
+```
+
+### Model Generation
+
+```{r model_generation}
+# inspired by https://www.datatechnotes.com/2019/06/gradient-boosting-regression-example.html
+
+indexes = createDataPartition(shooting_model_data$n, p = .90, list = F)
+train = shooting_model_data[indexes, ]
+test = shooting_model_data[-indexes, ]
+
+model = gbm(train$n ~.,
+                data = train,
+                distribution = "poisson")
+ 
+summary(model)
+```
+
+### Partial Dependency Plots {.tabset}
+
+#### Year
+
+```{r pdp_year}
+plot(model, "year")
+```
+
+#### Month
+
+```{r pdp_month}
+plot(model, "month")
+```
+
+#### Hour
+
+```{r pdp_hour}
+plot(model, "hour")
+```
+
+#### Weekday
+
+```{r pdp_weekday}
+plot(model, "day_of_week")
+```
+
+#### Borough
+
+```{r pdp_borough}
+plot(model, "BORO")
+```
+
+### Validation on Test Data
+
+```{r generate_preds}
+train$preds <- predict.gbm(model, train)
+test$preds <- predict.gbm(model, test)
+RMSE(train$preds, train$n)
+RMSE(test$preds, test$n)
+```
+
+## Conclusions
+
+A gradient boosted decision tree is not particularly useful for generating meaningful predictions from the data, as this specific type of model can generate negative values (which would be impossible to observe in reality). I plan to explore different model types/options in a future iteration of this report. That said, the conclusions that we can draw from the partial dependency plots are both useful and reasonable in most cases:
+
+- The frequency of shootings on a per-hour basis dropped precipitously in the early 2010's and continued to decline until recently. Gun violence has been surging in NYC during the pandemic, so it is not surprising to observe an uptick in 2020. What remains to be seen is what 2021 has in store.
+
+- The partial dependency plot of shooting frequency by month does not deliver any meaningful conclusions.
+
+- Shootings during daylight/traditional working hours occur at a lower rate than during the night time. This aligns with both what we observed in the previous section's "heat map" visualization, as well as the general common sense presumption that shooters prefer to move under cover of nightfall.
+
+- As we would surmise from the counts below, shootings are expected to occur much more frequently on weekends than during the week. This makes sense, as more people are "out and about" and thus more liable to be shot. Further, would-be shooters are also not busy with work during these times.
+
+```{r shootings_by_dow}
+shootings_dow <- clean_data %>%
+  count(day_of_week)
+shootings_dow
+```
+
+- Partial predictions of shooting frequency by borough indicate that Brooklyn and The Bronx are expected to observe markedly more frequent shootings than their counterparts. While Brooklyn's position atop the "leaderboard" is to be expected considering it is New York City's most populous borough, the fact that shootings in The Bronx (4th most populous) are expected to outpace both Queens and Manhattan (2nd and 3rd, respectively) is alarming to say the least. NYPD should consider devoting considerably more resources to policing The Bronx, specifically with an eye towards reducing gun violence there.
